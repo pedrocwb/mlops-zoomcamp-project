@@ -1,4 +1,4 @@
-# Watch Price Prediction
+# Mlops Zoom Camp
 
 Project created with MLOps-Template cookiecutter. For more info: https://mlopsstudygroup.github.io/mlops-guide/
 
