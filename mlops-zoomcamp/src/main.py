@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import string
+import mlflow
+from mlflow import MlflowClient
+
 
 import nltk
 try:
@@ -95,27 +98,47 @@ def text_vectorization(data):
     return X_train, X_test, y_train, y_test, tfidf
 
 
+def print_auto_logged_info(r):
+    tags = {k: v for k, v in r.data.tags.items() if not k.startswith("mlflow.")}
+    artifacts = [f.path for f in MlflowClient().list_artifacts(r.info.run_id, "model")]
+    print("run_id: {}".format(r.info.run_id))
+    print("artifacts: {}".format(artifacts))
+    print("params: {}".format(r.data.params))
+    print("metrics: {}".format(r.data.metrics))
+    print("tags: {}".format(tags))
+
 def train_model(X_train, X_test, y_train, y_test):
     print("Training Model")
-    model = RandomForestClassifier(n_estimators= 300)
-    model.fit(X_train, y_train)
-    
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)
-    
-    
-    accuracy = round(accuracy_score(y_test, y_pred), 3)
-    precision = round(precision_score(y_test, y_pred), 3)
-    recall = round(recall_score(y_test, y_pred), 3)
 
-    print(f'Accuracy of the model: {accuracy}')
-    print(f'Precision Score of the model: {precision}')
-    print(f'Recall Score of the model: {recall}')
+    mlflow.sklearn.autolog(log_models=True)
+
+    with mlflow.start_run() as run:
+        mlflow.set_tag("developer", "pedro")
+
+
+        model = RandomForestClassifier(n_estimators=1)
+        model.fit(X_train, y_train)
+        
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)
+        
+        
+        accuracy = round(accuracy_score(y_test, y_pred), 3)
+        precision = round(precision_score(y_test, y_pred), 3)
+        recall = round(recall_score(y_test, y_pred), 3)
+
+        print(f'Accuracy of the model: {accuracy}')
+        print(f'Precision Score of the model: {precision}')
+        print(f'Recall Score of the model: {recall}')
+        print_auto_logged_info(mlflow.get_run(run_id=run.info.run_id))
 
 
 
 
 if __name__ == "__main__":
+    mlflow.set_tracking_uri("http://127.0.0.1:5000")
+    mlflow.set_experiment("my-experiment-1")
+    
     data = read_data('data/SPAM_text_message.csv')
     data = feature_engineering(data)
     X_train, X_test, y_train, y_test, tfidf = text_vectorization(data)
