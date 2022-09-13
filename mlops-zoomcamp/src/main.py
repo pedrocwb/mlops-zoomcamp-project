@@ -24,31 +24,31 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score
+from prefect import flow, task
 
 
-
-
+@task
 def read_data(url: str):
     print(f"reading data from {url}")
     data = pd.read_csv(url)
     return data
 
 
-def count_total_words(text):
+def _count_total_words(text):
     char = 0
     for word in text.split():
         char += len(word)
     return char
 
-def convert_lowercase(text):
+def _convert_lowercase(text):
     text = text.lower()
     return text
 
-def remove_punc(text):
+def _remove_punc(text):
     exclude = string.punctuation
     return text.translate(str.maketrans('', '', exclude))
 
-def remove_stopwords(text):
+def _remove_stopwords(text):
     new_list = []
     words = word_tokenize(text)
     stopwrds = stopwords.words('english')
@@ -57,7 +57,7 @@ def remove_stopwords(text):
             new_list.append(word)
     return ' '.join(new_list)
 
-def perform_stemming(text):
+def _perform_stemming(text):
     stemmer = PorterStemmer()
     new_list = []
     words = word_tokenize(text)
@@ -67,17 +67,17 @@ def perform_stemming(text):
     return " ".join(new_list)
 
 
-
+@task
 def feature_engineering(data: pd.DataFrame):
     print("Feature Engineering")
     data['Total Words'] = data['Message'].apply(lambda x: len(x.split()))
-    data['Total Chars'] = data["Message"].apply(count_total_words)
+    data['Total Chars'] = data["Message"].apply(_count_total_words)
     
-    data['Message'] = data['Message'].apply(convert_lowercase)
-    data['Message'] = data['Message'].apply(remove_punc)
-    data['Message'] = data['Message'].apply(remove_stopwords)
+    data['Message'] = data['Message'].apply(_convert_lowercase)
+    data['Message'] = data['Message'].apply(_remove_punc)
+    data['Message'] = data['Message'].apply(_remove_stopwords)
 
-    data['Message'] = data['Message'].apply(perform_stemming)
+    data['Message'] = data['Message'].apply(_perform_stemming)
     data['Total Words After Transformation'] = data['Message'].apply(lambda x: np.log(len(x.split())))
 
     data['Category'] = data['Category'].replace({'spam':0,'ham':1})
@@ -85,6 +85,7 @@ def feature_engineering(data: pd.DataFrame):
     return data
 
 
+@task
 def text_vectorization(data):
     print("Text Vectorization")
     X = data["Message"]
@@ -98,15 +99,7 @@ def text_vectorization(data):
     return X_train, X_test, y_train, y_test, tfidf
 
 
-def print_auto_logged_info(r):
-    tags = {k: v for k, v in r.data.tags.items() if not k.startswith("mlflow.")}
-    artifacts = [f.path for f in MlflowClient().list_artifacts(r.info.run_id, "model")]
-    print("run_id: {}".format(r.info.run_id))
-    print("artifacts: {}".format(artifacts))
-    print("params: {}".format(r.data.params))
-    print("metrics: {}".format(r.data.metrics))
-    print("tags: {}".format(tags))
-
+@task
 def train_model(X_train, X_test, y_train, y_test):
     print("Training Model")
 
@@ -115,12 +108,10 @@ def train_model(X_train, X_test, y_train, y_test):
     with mlflow.start_run() as run:
         mlflow.set_tag("developer", "pedro")
 
-
         model = RandomForestClassifier(n_estimators=1)
         model.fit(X_train, y_train)
         
         y_pred = model.predict(X_test)
-        y_prob = model.predict_proba(X_test)
         
         
         accuracy = round(accuracy_score(y_test, y_pred), 3)
@@ -130,16 +121,26 @@ def train_model(X_train, X_test, y_train, y_test):
         print(f'Accuracy of the model: {accuracy}')
         print(f'Precision Score of the model: {precision}')
         print(f'Recall Score of the model: {recall}')
-        print_auto_logged_info(mlflow.get_run(run_id=run.info.run_id))
 
 
 
 
-if __name__ == "__main__":
-    mlflow.set_tracking_uri("http://127.0.0.1:5000")
-    mlflow.set_experiment("my-experiment-1")
-    
+@flow()
+def main():
+    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    mlflow.set_experiment("spam-detector-experiment")
+
     data = read_data('data/SPAM_text_message.csv')
     data = feature_engineering(data)
     X_train, X_test, y_train, y_test, tfidf = text_vectorization(data)
     train_model(X_train, X_test, y_train, y_test)
+
+
+
+from prefect.deployments import Deployment
+
+Deployment.build_from_flow(
+    flow=main,
+    name="model_training",
+    work_queue_name="spam-detector",
+).apply()
